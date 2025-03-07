@@ -1,0 +1,263 @@
+from sklearn.feature_extraction.text import CountVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+import pandas as pd
+import numpy as np
+
+# Sample Documents
+documents = [
+    "Statistical approaches to processing natural language text have become dominant in recent years. This foundational text is the first comprehensive introduction to statistical natural language processing.",
+]
+
+# Text Preprocessing - Simple tokenization using split
+filtered_token_set = []
+for doc in documents:
+    tokens = doc.lower().split()
+    filtered_tokens = [token for token in tokens if token.isalnum()]
+    filtered_token_set.append(" ".join(filtered_tokens))
+print(filtered_token_set)
+# Step 1: Compute Term Frequency (TF) using CountVectorizer
+cv = CountVectorizer()
+tf_matrix = cv.fit_transform(filtered_token_set)  # Term frequency matrix
+tf_df = pd.DataFrame(tf_matrix.toarray(), columns=cv.get_feature_names_out())
+
+# Step 2: Compute IDF manually
+N = len(documents)  # Total number of documents
+df = (tf_df > 0).sum(axis=0)  # Document frequency (df) of each term
+idf = np.log(N / (df + 1))  # Adding 1 to avoid division by zero
+
+# Step 3: Compute IDF-weighted term frequency (TF * IDF)
+tf_idf_matrix = tf_df * idf
+
+# Query Processing
+query = ["natural language processing"]
+query_vector_tf = cv.transform(query).toarray()  # Term frequency for query
+query_vector = query_vector_tf * idf.values  # Apply IDF weighting
+
+# Compute Cosine Similarity using sklearn's cosine_similarity function
+cos_sim = cosine_similarity(tf_idf_matrix, query_vector).flatten()
+
+# Print Results
+print("Cosine Similarity Scores:")
+for idx, score in enumerate(cos_sim):
+    print(f"Document {idx+1}: {score:.4f}")
+
+# Phase 1: Select top k documents
+k = 2
+top_k_indices = np.argsort(cos_sim)[-k:][::-1]
+print(top_k_indices)
+relevant_documents = [i + 1 for i in top_k_indices]
+non_relevant_documents = [i + 1 for i in range(len(documents)) if i not in top_k_indices]
+print("\nRelevant docs in phase 1:", relevant_documents)
+print("Non-relevant docs in phase 1:", non_relevant_documents)
+
+# Phase 2: Binary Independence Model
+# Create binary matrix
+tdm_bool = (tf_df > 0).astype(int)
+
+print("\nBinary Document-Term Matrix:")
+print(tdm_bool)
+
+# Apply Binary Independence Model (BIM) Formula for Query Terms
+S = len(relevant_documents)  # Number of relevant documents
+
+bim_scores = {}
+
+# Compute BIM score only for query terms
+query_tokens = query[0].split()
+print("\nQuery tokens:", query_tokens)
+
+for term in query_tokens:
+    if term in tdm_bool.columns:
+        n = tdm_bool[term].sum()  # Number of documents containing the term
+        s = tdm_bool.iloc[top_k_indices][term].sum()  # Number of relevant documents containing the term
+        # Apply BIM formula
+        numerator = (S + 0.5) / (S - s + 0.5)
+        denominator = (n - s + 0.5) / (N - S - n + s + 0.5)
+        bim_score = np.log(numerator / denominator)
+        bim_scores[term] = bim_score
+
+# Print BIM Scores for Query Terms
+print("\nBinary Independence Model (BIM) Scores for Query Terms:")
+for term, score in bim_scores.items():
+    print(f"{term}: {score:.4f}")
+
+# Calculate final scores for each document
+score_list = []
+for j in range(tdm_bool.shape[0]):
+    vec = tdm_bool.iloc[j]
+    score = sum(vec[term] * bim_scores.get(term, 0) for term in query_tokens)
+    score_list.append(score)
+
+print("\nFinal BIM scores:", score_list)
+---------------------------------------------
+import re
+import math
+from collections import defaultdict, Counter
+
+# Sample dataset
+data = [
+    ("Win a free iPhone now!", "spam"),
+    ("Lowest price on laptops, limited offer!", "spam"),
+
+]
+
+# Preprocessing: Tokenization
+def tokenize(text):
+    return re.findall(r'\b\w+\b', text.lower())
+
+# Separate data into classes
+class_docs = defaultdict(list)
+for text, label in data:
+    class_docs[label].append(tokenize(text))
+
+# Compute prior probabilities P(C)
+total_docs = len(data)
+class_counts = {label: len(docs) for label, docs in class_docs.items()}
+prior_prob = {label: count / total_docs for label, count in class_counts.items()}
+
+# Compute word frequencies per class
+word_counts = {label: Counter(word for doc in docs for word in doc) for label, docs in class_docs.items()}
+total_words = {label: sum(word_counts[label].values()) for label in word_counts}
+
+# Vocabulary (all unique words)
+vocabulary = set(word for words in word_counts.values() for word in words)
+
+# Laplace smoothing function
+def word_prob(word, label, alpha=1):
+    return (word_counts[label][word] + alpha) / (total_words[label] + alpha * len(vocabulary))
+
+# Naïve Bayes Classifier
+def predict(text):
+    words = tokenize(text)
+    scores = {}
+
+    for label in class_docs.keys():
+        # Start with prior probability log(P(C))
+        log_prob = math.log(prior_prob[label])
+
+        # Add log likelihoods log(P(w|C))
+        for word in words:
+            log_prob += math.log(word_prob(word, label))
+
+        scores[label] = log_prob
+
+    return max(scores, key=scores.get)  # Return the class with the highest probability
+
+# Test the model
+test_texts = ["You won a free trip!", "Stock market is crashing!", "Football match final results"]
+predictions = {text: predict(text) for text in test_texts}
+
+# Output results
+print("Predictions:")
+for text, label in predictions.items():
+    print(f"'{text}' → Predicted as: {label}")
+-------------------------------------------
+import numpy as np
+import re
+from sklearn.feature_extraction.text import CountVectorizer
+
+# Sample dataset
+data = [
+    ("Win a free iPhone now!", 1),  # spam
+
+
+]
+
+# Extract texts and labels
+texts, labels = zip(*data)
+
+# Initialize CountVectorizer
+vectorizer = CountVectorizer(lowercase=True, binary=True)  # binary=True ensures binary bag-of-words representation
+X = vectorizer.fit_transform(texts).toarray()  # Convert text to feature matrix
+y = np.array(labels)
+
+# Sigmoid function
+def sigmoid(z):
+    return 1 / (1 + np.exp(-z))
+
+# Train Logistic Regression using Gradient Descent
+def train_logistic_regression(X, y, lr=0.1, epochs=1000):
+    m, n = X.shape
+    weights = np.zeros(n)
+    bias = 0
+
+    for _ in range(epochs):
+        linear_output = np.dot(X, weights) + bias
+        predictions = sigmoid(linear_output)
+
+        # Compute gradients
+        dw = (1 / m) * np.dot(X.T, (predictions - y))
+        db = (1 / m) * np.sum(predictions - y)
+
+        # Update weights
+        weights -= lr * dw
+        bias -= lr * db
+
+    return weights, bias
+
+# Train model
+weights, bias = train_logistic_regression(X, y)
+
+# Predict function
+def predict_logistic(text):
+    vector = vectorizer.transform([text]).toarray()[0]  # Use trained vectorizer to transform text
+    score = np.dot(vector, weights) + bias
+    return 1 if sigmoid(score) > 0.5 else 0
+
+# Test predictions
+test_texts = ["You won a free trip!", "Stock market is crashing!", "Football match final results"]
+predictions = {text: "spam" if predict_logistic(text) else "ham" for text in test_texts}
+
+# Output results
+print("\nLogistic Regression Predictions:")
+for text, label in predictions.items():
+    print(f"'{text}' → Predicted as: {label}")
+----------------------------------------
+import numpy as np
+from sklearn.feature_extraction.text import CountVectorizer
+
+# Sample dataset
+data = [
+    ("Win a free iPhone now!", 1),  # spam
+    ("Lowest price on laptops, limited offer!", 1),
+
+]
+
+# Extract texts and labels
+texts, labels = zip(*data)
+
+# Initialize CountVectorizer
+vectorizer = CountVectorizer(lowercase=True, binary=True)
+X = vectorizer.fit_transform(texts).toarray()  # Convert text to feature matrix
+y = np.array(labels)
+
+# Compute Euclidean distance
+def euclidean_distance(v1, v2):
+    return np.sqrt(np.sum((v1 - v2) ** 2))
+
+# KNN classifier
+def knn_predict(text, k=3):
+    vector = vectorizer.transform([text]).toarray()[0]  # Convert text to vector
+    distances = []
+
+    # Compute distance from all training points
+    for i, x_train in enumerate(X):
+        distance = euclidean_distance(vector, x_train)
+        distances.append((distance, y[i]))
+
+    # Sort by distance and get top-k nearest neighbors
+    distances.sort(key=lambda x: x[0])
+    neighbors = distances[:k]
+
+    # Majority voting
+    class_votes = sum(label for _, label in neighbors)
+    return 1 if class_votes > k / 2 else 0
+
+# Test predictions
+test_texts = ["You won a free trip!", "Stock market is crashing!", "Football match final results"]
+predictions_knn = {text: "spam" if knn_predict(text) else "ham" for text in test_texts}
+
+# Output results
+print("\nKNN Predictions:")
+for text, label in predictions_knn.items():
+    print(f"'{text}' → Predicted as: {label}")
